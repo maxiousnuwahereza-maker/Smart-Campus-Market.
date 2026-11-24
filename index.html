@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Smart Campus Market System</title>
+<style>
+:root{--bg:#f3f5f1;--fg:#16231c;--card:#fff;--mut:#5d6b63;--pri:#0f6b4a;--prif:#fff;--acc:#c8541a;--bd:#d9e0da;--bad:#b42318}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1713;--fg:#e6efe9;--card:#18231d;--mut:#9bafa3;--pri:#46c28f;--prif:#08150f;--acc:#f0925c;--bd:#2a3a31;--bad:#f97066}}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.5 Georgia,'Times New Roman',serif;background:var(--bg);color:var(--fg)}
+h1,h2,h3,button,input,select,nav,th,label,.tag{font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
+nav{display:flex;flex-wrap:wrap;gap:8px 18px;justify-content:space-between;align-items:center;padding:12px 20px;background:var(--pri);color:var(--prif)}
+nav b{font-size:18px;cursor:pointer}nav a{margin-left:14px;cursor:pointer;color:var(--prif);text-decoration:underline;text-underline-offset:3px}
+nav a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+main{max-width:1000px;margin:0 auto;padding:20px}
+h1{font-size:28px;margin:0 0 4px}h2{font-size:20px;margin:24px 0 8px}
+.mut{color:var(--mut)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;margin-top:14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:14px}
+.price{font:700 18px system-ui;color:var(--acc)}
+button{background:var(--pri);color:var(--prif);border:0;border-radius:4px;padding:8px 14px;font-size:14px;cursor:pointer}
+button.alt{background:transparent;color:var(--fg);border:1px solid var(--bd)}button.del{background:var(--bad);color:#fff}
+input,select{padding:8px;border:1px solid var(--bd);border-radius:4px;background:var(--card);color:var(--fg);font-size:15px;max-width:100%}
+label{display:block;margin:10px 0 3px;font-size:14px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.bar input{flex:1;min-width:180px}
+table{width:100%;border-collapse:collapse;background:var(--card);font-size:14px}
+th,td{padding:8px;border-bottom:1px solid var(--bd);text-align:left;vertical-align:top}
+.tablewrap{overflow-x:auto}
+.tag{display:inline-block;padding:2px 8px;border-radius:10px;background:var(--bd);font-size:12px}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 18px;border-radius:4px;display:none;font-family:system-ui;max-width:90%}
+.form{max-width:420px}.form input,.form select{width:100%}
+</style>
+</head>
+<body>
+<nav id="nav"></nav>
+<main id="app"></main>
+<div id="toast" role="status" aria-live="polite"></div>
+<script>
+/* Smart Campus Market System - demo prototype. Fictitious data, mock payments only. */
+const K='scms_v1', $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hash=s=>{let x=5381;for(const c of 'scms:'+s)x=(x*33^c.charCodeAt(0))>>>0;return x.toString(16)}; // demo-only hash; production: bcrypt/argon2 server-side
+const money=n=>'UGX '+Number(n).toLocaleString();
+const FLOW=['Placed','Packed','Ready for pickup','Delivered'];
+function seed(){return{
+ users:[
+  {id:'u1',name:'Admin Amina',email:'admin@scms.test',pw:hash('Admin#1234'),role:'admin',ok:true},
+  {id:'u2',name:'Campus Bookshop',email:'vendor@scms.test',pw:hash('Vendor#1234'),role:'vendor',ok:true},
+  {id:'u3',name:'Sam Student',email:'student@stud.ucu.ac.ug',pw:hash('Student#1234'),role:'student',ok:true}],
+ products:[
+  {id:'p1',vid:'u2',name:'Data Structures Textbook',cat:'Books',price:45000,stock:10,active:true},
+  {id:'p2',vid:'u2',name:'A4 Notebook (200 pages)',cat:'Stationery',price:3500,stock:50,active:true},
+  {id:'p3',vid:'u2',name:'Scientific Calculator',cat:'Electronics',price:60000,stock:5,active:true},
+  {id:'p4',vid:'u2',name:'USB Flash Drive 32GB',cat:'Electronics',price:25000,stock:12,active:true},
+  {id:'p5',vid:'u2',name:'Campus Hoodie',cat:'Apparel',price:55000,stock:8,active:true}],
+ orders:[],cart:{},log:[],sess:null}}
+let S;try{S=JSON.parse(localStorage.getItem(K))}catch(e){}S=S||seed();
+const save=()=>{try{localStorage.setItem(K,JSON.stringify(S))}catch(e){}};
+let view='shop',Q='',C='',fails=0;
+const me=()=>S.users.find(u=>u.id===S.sess),prod=id=>S.products.find(p=>p.id===id),usr=id=>S.users.find(u=>u.id===id);
+const uid=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+const log=a=>{S.log.unshift({t:new Date().toLocaleString(),u:me()?me().email:'guest',a});save()};
+const toast=m=>{const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(toast.x);toast.x=setTimeout(()=>t.style.display='none',3200)};
+const go=v=>{view=v;render()};
+const need=r=>{const u=me();if(u&&u.role===r)return true;log('ACCESS DENIED to '+r+' area');return false};
+const denied=()=>`<h1>Access denied</h1><p class="mut">Your account cannot open this page. <a href="#" onclick="go('login');return false">Log in with the right role</a>.</p>`;
+const cartCount=()=>{const u=me();return u?Object.values(S.cart[u.id]||{}).reduce((a,b)=>a+b,0):0};
+
+/* ---------- accounts ---------- */
+function register(e){e.preventDefault();
+ const name=$('rn').value.trim(),email=$('re').value.trim().toLowerCase(),pw=$('rp').value,role=$('rr').value;
+ if(name.length<2)return toast('Enter your full name.');
+ if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return toast('Enter a valid email address.');
+ if(role==='student'&&!/@(stud\.)?ucu\.ac\.ug$/.test(email))return toast('Students must use a campus email ending in ucu.ac.ug (mock check).');
+ if(pw.length<8||!/\d/.test(pw)||!/[A-Za-z]/.test(pw))return toast('Password needs 8+ characters with letters and numbers.');
+ if(S.users.some(u=>u.email===email))return toast('That email is already registered.');
+ const ok=role==='student'; // students verified by campus email; vendors need admin approval
+ S.users.push({id:uid('u'),name,email,pw:hash(pw),role,ok});log('Registered '+role+' '+email);
+ toast(ok?'Account created. You can log in now.':'Account created. An admin must verify your vendor account.');go('login')}
+function login(e){e.preventDefault();
+ if(fails>=5)return toast('Too many failed attempts. Reload the page to retry.');
+ const u=S.users.find(x=>x.email===$('le').value.trim().toLowerCase()&&x.pw===hash($('lp').value));
+ if(!u){fails++;log('Failed login');return toast('Wrong email or password.')}
+ if(!u.ok)return toast('Your vendor account is waiting for admin verification.');
+ fails=0;S.sess=u.id;log('Login');go(u.role==='vendor'?'vendor':u.role==='admin'?'admin':'shop')}
+function logout(){log('Logout');S.sess=null;save();go('shop')}
+
+/* ---------- buyer ---------- */
+function add(pid){const u=me();if(!u){toast('Log in as a student to buy.');return go('login')}
+ if(u.role!=='student'){log('Non-student tried to buy');return toast('Only verified students can buy.')}
+ const c=S.cart[u.id]=S.cart[u.id]||{},p=prod(pid),q=(c[pid]||0)+1;
+ if(q>p.stock)return toast('Only '+p.stock+' left in stock.');
+ c[pid]=q;save();toast('Added to cart.');render()}
+function setQty(pid,d){const c=S.cart[me().id],p=prod(pid),q=(c[pid]||0)+d;
+ if(q>p.stock)return toast('Only '+p.stock+' left in stock.');
+ if(q<=0)delete c[pid];else c[pid]=q;save();render()}
+function checkout(){const u=me(),c=S.cart[u.id]||{},ids=Object.keys(c);
+ if(!ids.length)return toast('Your cart is empty.');
+ for(const id of ids){const p=prod(id);if(!p||!p.active||c[id]>p.stock)return toast('Stock changed for '+(p?p.name:'an item')+'. Update your cart.')}
+ if($('fail').checked){log('Sandbox payment declined');return toast('Sandbox payment declined. No order was created.')}
+ const by={};ids.forEach(id=>{const p=prod(id);(by[p.vid]=by[p.vid]||[]).push({name:p.name,price:p.price,qty:c[id],pid:id});p.stock-=c[id]});
+ Object.entries(by).forEach(([vid,items])=>S.orders.push({id:'ORD-'+(1001+S.orders.length),sid:u.id,vid,items,
+  total:items.reduce((a,i)=>a+i.price*i.qty,0),pay:$('pm').value,status:'Placed',date:new Date().toLocaleDateString(),reason:'',rating:0}));
+ S.cart[u.id]={};log('Checkout OK');save();toast('Mock payment confirmed. Order placed.');go('orders')}
+const restock=o=>o.items.forEach(i=>{const p=prod(i.pid);if(p)p.stock+=i.qty});
+function cancel(id){const o=S.orders.find(x=>x.id===id);if(!o||o.sid!==S.sess||o.status!=='Placed')return toast('This order can no longer be cancelled.');
+ o.status='Cancelled';restock(o);log('Cancelled '+id);save();render()}
+function retReq(id){const o=S.orders.find(x=>x.id===id);if(!o||o.sid!==S.sess||o.status!=='Delivered')return;
+ const r=(prompt('Reason for return?')||'').trim();if(r.length<5)return toast('Give a reason of at least 5 characters.');
+ o.status='Return requested';o.reason=r;log('Return requested '+id);save();render()}
+function rate(id,n){const o=S.orders.find(x=>x.id===id);if(o&&o.sid===S.sess&&o.status==='Delivered'){o.rating=n;log('Rated '+id);save();render()}}
+
+/* ---------- vendor ---------- */
+function addProd(e){e.preventDefault();if(!need('vendor'))return;
+ const name=$('pn').value.trim(),price=+$('pp').value,stock=+$('ps').value;
+ if(name.length<2)return toast('Enter a product name.');
+ if(!(price>0)||!Number.isInteger(price))return toast('Price must be a whole number above 0.');
+ if(!Number.isInteger(stock)||stock<0)return toast('Stock must be 0 or more.');
+ S.products.push({id:uid('p'),vid:S.sess,name,cat:$('pc').value,price,stock,active:true});log('Added product '+name);save();render()}
+function setStock(pid){const p=prod(pid);if(!p||p.vid!==S.sess)return;const n=+prompt('New stock level for '+p.name+'?',p.stock);
+ if(!Number.isInteger(n)||n<0)return toast('Stock must be 0 or more.');p.stock=n;save();render()}
+function toggle(pid){const p=prod(pid);if(!p||p.vid!==S.sess)return;p.active=!p.active;log('Toggled '+p.name);save();render()}
+function advance(id){const o=S.orders.find(x=>x.id===id);if(!o||o.vid!==S.sess)return;const i=FLOW.indexOf(o.status);
+ if(i<0||i>=FLOW.length-1)return;o.status=FLOW[i+1];log(id+' -> '+o.status);save();render()}
+function resolve(id,ok){const o=S.orders.find(x=>x.id===id);if(!o||o.vid!==S.sess||o.status!=='Return requested')return;
+ o.status=ok?'Returned':'Return rejected';if(ok)restock(o);log(id+' '+o.status);save();render()}
+
+/* ---------- admin ---------- */
+function verify(id,ok){if(!need('admin'))return;const u=usr(id);if(ok)u.ok=true;else S.users=S.users.filter(x=>x.id!==id);log((ok?'Verified ':'Rejected ')+u.email);save();render()}
+function resetDemo(){if(!need('admin'))return;if(confirm('Reset all demo data?')){S=seed();save();view='shop';render()}}
+
+/* ---------- views ---------- */
+const V={
+shop(){const cats=[...new Set(S.products.map(p=>p.cat))].sort();
+ const list=S.products.filter(p=>p.active&&(!C||p.cat===C)&&(p.name+p.cat).toLowerCase().includes(Q.toLowerCase()));
+ return `<h1>Campus marketplace</h1><p class="mut">Verified students and campus vendors, one place to buy and sell.</p>
+ <div class="bar"><input id="q" aria-label="Search products" placeholder="Search products" value="${esc(Q)}" onchange="Q=this.value;render()">
+ <select aria-label="Category" onchange="C=this.value;render()"><option value="">All categories</option>${cats.map(c=>`<option ${c===C?'selected':''}>${esc(c)}</option>`).join('')}</select></div>
+ ${list.length?`<div class="grid">${list.map(p=>`<div class="card"><h3>${esc(p.name)}</h3><span class="tag">${esc(p.cat)}</span>
+ <p class="mut">Sold by ${esc((usr(p.vid)||{}).name||'vendor')}</p><div class="price">${money(p.price)}</div>
+ <p>${p.stock>0?p.stock+' in stock':'<b>Out of stock</b>'}</p><button ${p.stock<1?'disabled':''} onclick="add('${p.id}')">Add to cart</button></div>`).join('')}</div>`
+ :'<p>No products match your search. Clear the filters to see everything.</p>'}`},
+cart(){if(!need('student'))return denied();const c=S.cart[S.sess]||{},ids=Object.keys(c).filter(i=>prod(i));
+ if(!ids.length)return `<h1>Your cart</h1><p>Your cart is empty. <a href="#" onclick="go('shop');return false">Browse products</a>.</p>`;
+ const total=ids.reduce((a,i)=>a+prod(i).price*c[i],0);
+ return `<h1>Your cart</h1><div class="tablewrap"><table><tr><th>Item</th><th>Price</th><th>Qty</th><th>Subtotal</th></tr>
+ ${ids.map(i=>{const p=prod(i);return `<tr><td>${esc(p.name)}</td><td>${money(p.price)}</td><td><button class="alt" aria-label="Decrease" onclick="setQty('${i}',-1)">−</button> ${c[i]} <button class="alt" aria-label="Increase" onclick="setQty('${i}',1)">+</button></td><td>${money(p.price*c[i])}</td></tr>`}).join('')}
+ <tr><th colspan="3">Total</th><th>${money(total)}</th></tr></table></div>
+ <h2>Mock payment (sandbox)</h2><p class="mut">No real card or mobile-money details are collected.</p>
+ <label for="pm">Payment method</label><select id="pm"><option>Mock Mobile Money</option><option>Mock Card</option><option>Pay on pickup</option></select>
+ <label><input type="checkbox" id="fail"> Simulate a declined payment (for testing)</label><br><button onclick="checkout()">Pay ${money(total)}</button>`},
+orders(){if(!need('student'))return denied();const os=S.orders.filter(o=>o.sid===S.sess).reverse();
+ return `<h1>My orders</h1>${os.length?os.map(o=>`<div class="card" style="margin-bottom:12px"><b>${o.id}</b> <span class="tag">${o.status}</span> <span class="mut">${o.date} · ${esc(o.pay)}</span>
+ <p>${o.items.map(i=>`${esc(i.name)} × ${i.qty}`).join(', ')}<br><b>${money(o.total)}</b> from ${esc((usr(o.vid)||{}).name||'vendor')}</p>
+ ${o.status==='Placed'?`<button class="del" onclick="cancel('${o.id}')">Cancel order</button>`:''}
+ ${o.status==='Delivered'?`<button class="alt" onclick="retReq('${o.id}')">Request return</button> Rate: ${[1,2,3,4,5].map(n=>`<button class="alt" aria-label="${n} stars" onclick="rate('${o.id}',${n})">${n<=o.rating?'★':'☆'}</button>`).join('')}`:''}
+ ${o.reason?`<p class="mut">Return reason: ${esc(o.reason)}</p>`:''}</div>`).join(''):'<p>No orders yet. <a href="#" onclick="go(\'shop\');return false">Start shopping</a>.</p>'}`},
+vendor(){if(!need('vendor'))return denied();const mine=S.products.filter(p=>p.vid===S.sess),os=S.orders.filter(o=>o.vid===S.sess).reverse();
+ return `<h1>Vendor dashboard</h1><h2>Add a product</h2><form class="form" onsubmit="addProd(event)">
+ <label for="pn">Name</label><input id="pn" required><label for="pc">Category</label><select id="pc"><option>Books</option><option>Stationery</option><option>Electronics</option><option>Apparel</option><option>Food</option><option>Other</option></select>
+ <label for="pp">Price (UGX)</label><input id="pp" type="number" min="1" step="1" required><label for="ps">Stock</label><input id="ps" type="number" min="0" step="1" required><br><br><button>Add product</button></form>
+ <h2>My products</h2><div class="tablewrap"><table><tr><th>Name</th><th>Price</th><th>Stock</th><th>Status</th><th></th></tr>${mine.map(p=>`<tr><td>${esc(p.name)}</td><td>${money(p.price)}</td><td>${p.stock}</td><td>${p.active?'Listed':'Hidden'}</td>
+ <td><button class="alt" onclick="setStock('${p.id}')">Set stock</button> <button class="alt" onclick="toggle('${p.id}')">${p.active?'Hide':'List'}</button></td></tr>`).join('')}</table></div>
+ <h2>Incoming orders</h2><div class="tablewrap"><table><tr><th>Order</th><th>Buyer</th><th>Items</th><th>Status</th><th>Action</th></tr>${os.length?os.map(o=>{const i=FLOW.indexOf(o.status);return `<tr><td>${o.id}</td><td>${esc((usr(o.sid)||{}).name||'')}</td><td>${o.items.map(x=>esc(x.name)+' × '+x.qty).join(', ')}</td><td>${o.status}${o.reason?'<br><small>'+esc(o.reason)+'</small>':''}</td>
+ <td>${i>=0&&i<FLOW.length-1?`<button onclick="advance('${o.id}')">Mark ${FLOW[i+1]}</button>`:''}${o.status==='Return requested'?`<button onclick="resolve('${o.id}',true)">Accept return</button> <button class="alt" onclick="resolve('${o.id}',false)">Reject</button>`:''}</td></tr>`}).join(''):'<tr><td colspan="5">No orders yet.</td></tr>'}</table></div>`},
+admin(){if(!need('admin'))return denied();const pend=S.users.filter(u=>!u.ok);
+ return `<h1>Admin console</h1><h2>Vendors awaiting verification</h2>${pend.length?pend.map(u=>`<div class="card" style="margin-bottom:8px">${esc(u.name)} (${esc(u.email)}) <button onclick="verify('${u.id}',true)">Verify</button> <button class="del" onclick="verify('${u.id}',false)">Reject</button></div>`).join(''):'<p class="mut">No pending vendors.</p>'}
+ <h2>All orders (${S.orders.length})</h2><div class="tablewrap"><table><tr><th>Order</th><th>Total</th><th>Status</th><th>Date</th></tr>${S.orders.map(o=>`<tr><td>${o.id}</td><td>${money(o.total)}</td><td>${o.status}</td><td>${o.date}</td></tr>`).join('')}</table></div>
+ <h2>Audit log</h2><div class="tablewrap"><table><tr><th>Time</th><th>User</th><th>Action</th></tr>${S.log.slice(0,40).map(l=>`<tr><td>${esc(l.t)}</td><td>${esc(l.u)}</td><td>${esc(l.a)}</td></tr>`).join('')}</table></div><br><button class="del" onclick="resetDemo()">Reset demo data</button>`},
+login(){return `<h1>Log in</h1><form class="form" onsubmit="login(event)"><label for="le">Email</label><input id="le" type="email" required autocomplete="username"><label for="lp">Password</label><input id="lp" type="password" required autocomplete="current-password"><br><br><button>Log in</button></form>
+ <h2>Demo accounts (fictitious)</h2><p class="mut">Student: student@stud.ucu.ac.ug / Student#1234<br>Vendor: vendor@scms.test / Vendor#1234<br>Admin: admin@scms.test / Admin#1234</p>
+ <p>New here? <a href="#" onclick="go('register');return false">Create an account</a>.</p>`},
+register(){return `<h1>Create an account</h1><form class="form" onsubmit="register(event)"><label for="rn">Full name</label><input id="rn" required><label for="re">Email (students: campus email)</label><input id="re" type="email" required>
+ <label for="rp">Password (8+ characters, letters and numbers)</label><input id="rp" type="password" required autocomplete="new-password"><label for="rr">I want to</label><select id="rr"><option value="student">Buy as a student</option><option value="vendor">Sell as a campus vendor</option></select><br><br><button>Create account</button></form>
+ <p class="mut">Students are verified by campus email. Vendors are verified by an admin. Use fictitious details only.</p>`}};
+function render(){const u=me(),r=u&&u.role;
+ $('nav').innerHTML=`<b tabindex="0" onclick="go('shop')">🎓 Smart Campus Market</b><span><a href="#" onclick="go('shop');return false">Shop</a>`+
+ (r==='student'?`<a href="#" onclick="go('cart');return false">Cart (${cartCount()})</a><a href="#" onclick="go('orders');return false">My orders</a>`:'')+
+ (r==='vendor'?`<a href="#" onclick="go('vendor');return false">Vendor</a>`:'')+(r==='admin'?`<a href="#" onclick="go('admin');return false">Admin</a>`:'')+
+ (u?`<a href="#" onclick="logout();return false">Log out (${esc(u.name)})</a>`:`<a href="#" onclick="go('login');return false">Log in</a><a href="#" onclick="go('register');return false">Register</a>`)+`</span>`;
+ $('app').innerHTML=V[view]()}
+render();
+</script>
+</body>
+</html>
